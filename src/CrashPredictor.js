@@ -75,7 +75,7 @@ export default function CrashPredictor() {
     const input = history.slice(-10);
     const xs = tf.tensor2d([input]);
     const prediction = await model.predict(xs).data();
-    setNextPrediction(prediction[0]);
+    setNextPrediction(Math.max(1, prediction[0])); // исправляем слишком маленький коэффициент
   };
 
   const trainFromAll = async () => {
