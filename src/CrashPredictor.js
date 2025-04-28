@@ -1,4 +1,4 @@
-// Crash Predictor — AI-версия на базе React и Firebase
+// Crash Predictor — Улучшенная AI-версия на базе React и Firebase с LSTM
 import React, { useState, useEffect } from "react";
 import * as tf from "@tensorflow/tfjs";
 import { initializeApp } from "firebase/app";
@@ -36,16 +36,19 @@ export default function CrashPredictor() {
     if (user) loadModel();
   }, [user]);
 
+  const normalize = (value) => value / 10;
+  const denormalize = (value) => value * 10;
+
   const loadModel = async () => {
     try {
-      const loaded = await tf.loadLayersModel("indexeddb://crash-predictor-model");
+      const loaded = await tf.loadLayersModel("indexeddb://crash-predictor-model-lstm");
       loaded.compile({ optimizer: "adam", loss: "meanSquaredError" });
       setModel(loaded);
     } catch {
-      const input = tf.input({ shape: [10] });
-      const dense1 = tf.layers.dense({ units: 32, activation: "relu" }).apply(input);
-      const dense2 = tf.layers.dense({ units: 1, activation: "linear" }).apply(dense1);
-      const net = tf.model({ inputs: input, outputs: dense2 });
+      const input = tf.input({ shape: [10, 1] });
+      const lstm1 = tf.layers.lstm({ units: 32, returnSequences: false }).apply(input);
+      const dense = tf.layers.dense({ units: 1, activation: "linear" }).apply(lstm1);
+      const net = tf.model({ inputs: input, outputs: dense });
       net.compile({ optimizer: "adam", loss: "meanSquaredError" });
       setModel(net);
     }
@@ -61,21 +64,21 @@ export default function CrashPredictor() {
     await saveToFirestore(value);
 
     if (model && newHistory.length >= 10) {
-      const input = newHistory.slice(-10);
-      const xs = tf.tensor2d([input]);
-      const ys = tf.tensor2d([[value]]);
-      await model.fit(xs, ys, { epochs: 3 });
-      await model.save("indexeddb://crash-predictor-model");
+      const input = newHistory.slice(-10).map(normalize).map(v => [v]);
+      const xs = tf.tensor3d([input]);
+      const ys = tf.tensor2d([[normalize(value)]]);
+      await model.fit(xs, ys, { epochs: 5 });
+      await model.save("indexeddb://crash-predictor-model-lstm");
       predictForward(newHistory);
     }
   };
 
   const predictForward = async (history) => {
     if (!model || history.length < 10) return;
-    const input = history.slice(-10);
-    const xs = tf.tensor2d([input]);
+    const input = history.slice(-10).map(normalize).map(v => [v]);
+    const xs = tf.tensor3d([input]);
     const prediction = await model.predict(xs).data();
-    setNextPrediction(Math.max(1, prediction[0])); // исправляем слишком маленький коэффициент
+    setNextPrediction(Math.max(1, denormalize(prediction[0])));
   };
 
   const trainFromAll = async () => {
@@ -85,13 +88,13 @@ export default function CrashPredictor() {
       const inputs = [];
       const outputs = [];
       for (let i = 10; i < data.length; i++) {
-        inputs.push(data.slice(i-10, i));
-        outputs.push(data[i]);
+        inputs.push(data.slice(i-10, i).map(normalize).map(v => [v]));
+        outputs.push(normalize(data[i]));
       }
-      const xs = tf.tensor2d(inputs);
+      const xs = tf.tensor3d(inputs);
       const ys = tf.tensor2d(outputs.map(v => [v]));
-      await model.fit(xs, ys, { epochs: 5 });
-      await model.save("indexeddb://crash-predictor-model");
+      await model.fit(xs, ys, { epochs: 10 });
+      await model.save("indexeddb://crash-predictor-model-lstm");
       alert("Модель обучена на всех данных!");
     }
   };
@@ -110,7 +113,7 @@ export default function CrashPredictor() {
 
   return (
     <div style={{ fontFamily: "sans-serif", padding: "1rem" }}>
-      <h1>🚀 Crash Predictor AI</h1>
+      <h1>🚀 Crash Predictor AI (LSTM)</h1>
       <p>👤 Пользователь: {user.email} <button onClick={signOutUser}>Выйти</button></p>
       <div style={{ marginBottom: 20 }}>
         <input type="number" placeholder="Введите коэффициент краша (например, 1.35)"
